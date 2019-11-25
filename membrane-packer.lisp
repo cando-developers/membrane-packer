@@ -669,7 +669,7 @@ Insert the membrane annealing function here
                            :center-height height
                            :density density)))))))
 
-(defparameter *canonicalized-popc* #P"cando:lisp;membrane-packer;data;popc.cando")
+(defparameter *canonicalized-popc* (merge-pathnames #P"data/popc.cando" *default-pathname-defaults*))
 
 (defparameter *popc* nil)
 
