@@ -1,0 +1,43 @@
+quickload "membrane-packer"
+
+setupAmberPaths
+
+source "leaprc.protein.ff14SB"
+
+source "leaprc.lipid14"
+
+source "leaprc.water.tip3p"
+
+source "leaprc.gaff"
+
+prot = loadMoe /Users/meister/Development/cando-dev/extensions/cando/src/lisp/membrane-packer/data/merck_suvorexant_derivatives.moe
+
+ligands = (loop for index from 3 to 20 collect (removeMatter |prot| (molid |prot| index)))
+
+desc ligands
+
+desc prot
+
+set prot/1.1 name :NPRO
+set prot/1.205 name :CGLN
+set prot/2.206 name :NLYS
+set prot/2.293 name :CCYS
+
+assignAtomTypes prot
+
+(move-geometric-center-to-origin |prot|)
+
+scored-membranes = (membrane-packer:pack |prot| :number-of-generations 50)
+
+memb = (membrane-packer::membrane (first  |scored-membranes|))
+
+membagg = (membrane-packer::build-aggregate-from-ga-membrane |memb|)
+
+(defparameter *rbmin* (membrane-packer::build-rigid-body-minimizer |memb| :debug t))
+
+*rbmin*
+
+(chem:minimize |*rbmin*|)
+
+
+

@@ -1,0 +1,3 @@
+Warning!  Skipping 10-12 hbond in #<IOSTREAM-STREAM #P"/Users/meister/Development/amber18/dat/leap/parm/gaff.dat" file-pos 477637>
+Warning!  Skipping force field atom equivalences in #<IOSTREAM-STREAM #P"/Users/meister/Development/amber18/dat/leap/parm/gaff.dat" file-pos 477719>
+Adding force field gaff.dat to DEFAULT
