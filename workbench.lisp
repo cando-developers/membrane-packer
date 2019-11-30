@@ -35,6 +35,7 @@
 (.= tm (membrane-packer:build-ga-membrane prot))
 (.= agg (membrane-packer::build-aggregate-from-ga-membrane tm))
 
+(membrane-packer::optimize-lipid-placement tm)
 
 #|
 (.= memb  (membrane-packer::membrane (first  |scored-membranes|))

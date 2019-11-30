@@ -18,7 +18,7 @@ This code uses Offset coordinates odd-r
 (defparameter *mutate-lipid-fraction* 0.08)
 (defparameter *mutate-position-fraction* 0.3)
 (defparameter *population-size* 200)
-(defparameter *lipid-density* 0.0098) ; 0.0098)
+(defparameter *lipid-density* 0.0090) ; 0.0098)
 (defparameter *random-tip-angle-degrees* 10.0)
 (defparameter *lipid-radius* 5.2)
 (defparameter *lipid-vdw-radius-nanometers* 0.62)
@@ -238,7 +238,6 @@ all layed out in a linear vector.")
              (density (/ (length lipid-vec) area)))
         (values average-height density)))))
 
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
 ;;; Calculate the number of lipid molecules that can
@@ -261,7 +260,7 @@ all layed out in a linear vector.")
    (bounding-box :initarg :bounding-box :accessor bounding-box)
    ))
 
-(defun z-height (bit-field)
+(defun bit-field-z-height (bit-field)
   (geom:vz (min-corner bit-field)))
 
 (defun max-corner (bit-field)
@@ -383,7 +382,8 @@ all layed out in a linear vector.")
     bit-field))
 
 (defun excluded-lipid (bit-field)
-  (let* ((new-bit-field (make-bit-field (bounding-box bit-field) (z-height bit-field) (bit-spacing bit-field)))
+  (let* ((new-bit-field (make-bit-field (bounding-box bit-field)
+                                        (bit-field-z-height bit-field) (bit-spacing bit-field)))
          (dims (array-dimensions (bit-array bit-field)))
          (xdim (elt dims 0))
          (ydim (elt dims 1))
@@ -476,13 +476,17 @@ all layed out in a linear vector.")
     (when index (chem:set-position atm0 (geom:vec index 0 0)))
     (format t "~a ~a~%" (abs (- (geom:vx (chem:get-position atm0)) (geom:vx (chem:get-position atm1)))) (chem:calculate-energy-and-force energy))))
 
-(defun build-simple-membrane-aggregate (membrane z-height top-bottom &optional (lipid-radius *lipid-radius*))
-  (let* ((solute (solute (ga-solute membrane)))
+(defun build-simple-membrane-aggregate (membrane top-bottom &optional (lipid-radius *lipid-radius*))
+  (let* ((z-height (ecase top-bottom
+                     (:top (abs (z-height membrane)))
+                     (:bottom (- (abs (z-height membrane))))
+                     (t (error "Only :top or :bottom for top-bottom"))))
+         (solute (solute (ga-solute membrane)))
          (agg (chem:make-aggregate)))
     (cando:do-atoms (atm solute)
       (let* ((zpos (geom:vz (chem:get-position atm)))
              (zdelta (abs (- zpos z-height))))
-        (when (< zdelta lipid-radius)
+        (when (< zdelta (* 2.0 lipid-radius))
           (let ((natm (chem:make-atom (chem:get-name atm) (chem:get-element atm)))
                 (res (chem:make-residue :solute))
                 (mol (chem:make-molecule :solute)))
@@ -491,24 +495,25 @@ all layed out in a linear vector.")
             (chem:add-matter res natm)
             (chem:add-matter mol res)
             (chem:add-matter agg mol)))))
-    (loop for lipid across (lipids membrane)
-          for index from 0
-          when (eq (top-bottom lipid) top-bottom)
-            do (let* ((center (lipid-center lipid))
-                      (name (intern (format nil "LIPID~a" index) :keyword))
-                      (atm (chem:make-atom name :|Ar|))
-                      (res (chem:make-residue name))
-                      (mol (chem:make-molecule name)))
-                 (chem:set-position atm center)
-                 ;;(chem:set-position atm (geom:v+ (geom:vec 0.0 0.0 0.0) (geom:vec (random 40.0) (random 40.0) z-height)))
-                 (chem:set-type atm :lipid0)
-                 (chem:setf-force-field-name mol *membrane-force-field-name*)
-                 (chem:add-matter res atm)
-                 (chem:add-matter mol res)
-                 (chem:add-matter agg mol)))
-    (chem:aggregate-set-bounding-box agg (bounding-box membrane))
-    agg))
-
+    (let ((pseudo-atom-to-lipid (make-hash-table)))
+      (loop for lipid across (lipids membrane)
+            for index from 0
+            when (eq (top-bottom lipid) top-bottom)
+              do (let* ((center (lipid-center lipid))
+                        (name (intern (format nil "LIPID~a" index) :keyword))
+                        (atm (chem:make-atom name :|Ar|))
+                        (res (chem:make-residue name))
+                        (mol (chem:make-molecule name)))
+                   (chem:set-position atm center)
+                   ;;(chem:set-position atm (geom:v+ (geom:vec 0.0 0.0 0.0) (geom:vec (random 40.0) (random 40.0) z-height)))
+                   (chem:set-type atm :lipid0)
+                   (chem:setf-force-field-name mol *membrane-force-field-name*)
+                   (chem:add-matter res atm)
+                   (chem:add-matter mol res)
+                   (chem:add-matter agg mol)
+                   (setf (gethash atm pseudo-atom-to-lipid) lipid)))
+      (chem:aggregate-set-bounding-box agg (bounding-box membrane))
+      (values agg pseudo-atom-to-lipid))))
 
 (defun build-simple-aggregate-energy-function (simple-aggregate &optional (lipid-radius *lipid-radius*))
   (cando:do-atoms (atm simple-aggregate)
@@ -521,8 +526,6 @@ all layed out in a linear vector.")
          (atom-table (chem:atom-table energy-function)))
     (chem:set-nonbond-cutoff (chem:get-nonbond-component energy-function) 16.0)
     (chem:set-bounding-box energy-function (chem:bounding-box simple-aggregate))
-    (format t "atom-table -> ~a~%" atom-table)
-    (format t "First atom: ~a~%" (chem:elt-atom atom-table 0))
     (let* ((num-atoms (chem:get-number-of-atoms atom-table))
            (frozen (make-array (* num-atoms 3) :element-type 'bit :initial-element 0)))
       (loop for atom-index below num-atoms
@@ -536,45 +539,25 @@ all layed out in a linear vector.")
                        (elt frozen (+ coord-index 2)) 1))
       (values energy-function frozen))))
 
-(defun build-simple-membrane-energy-function (membrane z-height top-bottom &optional (lipid-radius *lipid-radius*))
-  (leap:assign-atom-types (solute (ga-solute membrane)))
-  (let ((simple-aggregate (build-simple-membrane-aggregate membrane z-height top-bottom lipid-radius)))
-    (build-simple-aggregate-energy-function simple-aggregate lipid-radius)))
+(defun optimize-lipid-leaf-placement (membrane top-bottom &optional (lipid-radius *lipid-radius*))
+  (multiple-value-bind (leaf-aggregate pseudo-atom-to-lipid)
+      (build-simple-membrane-aggregate membrane top-bottom lipid-radius)
+    (multiple-value-bind (energy-function frozen)
+        (build-simple-aggregate-energy-function leaf-aggregate lipid-radius)
+      (energy:minimize-energy-function energy-function :sd-tolerance 1.0
+                                                       :cg-tolerance 0.0001
+                                                       :frozen frozen
+                                                       :print-intermediate-results nil)
+      (cando:do-atoms (atm leaf-aggregate)
+        (let ((lipid (gethash atm pseudo-atom-to-lipid)))
+          (when lipid
+            (geom:set-translation (transform lipid) (chem:get-position atm))))))))
 
-(defun setup-simple-membrane-dynamics (energy-function bounding-box)
-  (let ((dyn (dynamics:make-atomic-simulation energy-function
-                                              :delta-t *1fs-time-units*
-                                              :accumulate-coordinates t)))
-    (chem:setf-velocity-scale energy-function 0.9 0.9 0.9)
-    dyn))
 
-#|
-Insert the membrane annealing function here
-|#
-
-(defun advance-simple-membrane-dynamics (dyn bounding-box &optional frozen)
-  ;; Bring stuff back into the periodic box.
-  (dynamics:with-dynamics (dyn)
-    (let ((pos (geom:vec 0 0 0)))
-      (dynamics:velocity-verlet-step dyn :frozen frozen)
-      (loop for index below (length (dynamics:coordinates dyn)) by 3
-            do (geom:vec-extract pos (dynamics:coordinates dyn) index)
-            do (let ((new-pos (chem:normalize-position bounding-box pos)))
-                 (geom:vec-put (dynamics:coordinates dyn) new-pos index))))))
-
-(defun simulate-simple-membrane-energy-function (energy-function bounding-box frozen num)
-  (let ((dyn (setup-simple-membrane-dynamics energy-function bounding-box)))
-    ;; Bring stuff back into the periodic box.
-    (dynamics:with-dynamics (dyn)
-      (loop for x from 0 below num
-            do (advance-simple-membrane-dynamics dyn bounding-box frozen)))
-    dyn))
-
-(defun simulate-simple-membrane (membrane num)
-  (multiple-value-bind (energy-function frozen)
-      (membrane-packer::build-simple-membrane-energy-function membrane 10 :top)
-    (simulate-simple-membrane-energy-function energy-function (bounding-box membrane) frozen num)))
-        
+(defun optimize-lipid-placement (membrane &key (lipid-radius *lipid-radius*))
+  (cando:lazy-setup-lparallel-kernel)
+  (lparallel:pmapc (lambda (leaf) (optimize-lipid-leaf-placement membrane leaf lipid-radius))
+                   '(:top :bottom)))
 
 (defun order-atoms-in-molecule (molecule)
   (let ((order-info (make-array 256 :adjustable t :fill-pointer 0)))
@@ -700,6 +683,7 @@ Insert the membrane annealing function here
 
 (defclass ga-membrane ()
   ((bounding-box :initarg :bounding-box :accessor bounding-box)
+   (z-height :initform *z-height* :initarg :z-height :reader z-height)
    (lipids :initarg :lipids :accessor lipids)
    (lipid-selector :initarg :lipid-selector :accessor lipid-selector)
    (ga-solute :initarg :ga-solute :accessor ga-solute)))
@@ -887,7 +871,7 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
           do (progn
                (format t "Adding ")
                (push ga-lipid lipids))
-          do (format t "#collisions ~a  for solute ~a~%" collisions (lipid-id ga-lipid))))
+          do (format t "solute ~a #collisions ~a~%" (lipid-id ga-lipid) collisions)))
   lipids)
 
 (defparameter *top-agg* nil)
@@ -961,25 +945,30 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
                                       (push bottom-ga-lipid bottom-lipids)))))
               (format t "There are ~a top-lipids~%" (length top-lipids))
               (let ((total-top-lipids (calculate-how-many-lipids-fit bounding-box (solute ga-solute) z-height)))
+                (format t "    there should be ~a~%" total-top-lipids)              
                 (setf top-lipids (fill-in-lipids top-lipids top-solute-colliders solute :top
-                                             :z-height z-height
-                                             :expected-lipids total-top-lipids))
-                (format t "    there should be ~a~%" total-top-lipids))
+                                                 :z-height z-height
+                                                 :expected-lipids total-top-lipids)))
               (format t "There are ~a bottom-lipids~%" (length bottom-lipids))
               (let ((total-bottom-lipids (calculate-how-many-lipids-fit bounding-box (solute ga-solute) (- z-height))))
+                (format t "    there should be ~a~%" total-bottom-lipids)
                 (setf bottom-lipids (fill-in-lipids bottom-lipids bottom-solute-colliders solute :bottom
-                                             :z-height z-height
-                                             :expected-lipids total-bottom-lipids))
-                (format t "    there should be ~a~%" total-bottom-lipids))
-              (setf *top-agg* (simulate-crude-lipids bounding-box top-lipids solute :top-bottom :top :z-height z-height))
-              (simulate-crude-lipids bounding-box bottom-lipids solute :top-bottom :bottom :z-height z-height))
-            (let ((lipids (make-array (+ (length top-lipids) (length bottom-lipids))
-                                      :initial-contents (append top-lipids bottom-lipids))))
-              (make-instance 'ga-membrane
-                             :bounding-box bounding-box
-                             :lipids lipids
-                             :lipid-selector lipid-selector
-                             :ga-solute ga-solute))))))))
+                                                    :z-height z-height
+                                                    :expected-lipids total-bottom-lipids)))
+              (progn
+                (setf *top-agg* (simulate-crude-lipids bounding-box top-lipids solute :top-bottom :top :z-height z-height))
+                (simulate-crude-lipids bounding-box bottom-lipids solute :top-bottom :bottom :z-height z-height)))
+            (let* ((lipids (make-array (+ (length top-lipids) (length bottom-lipids))
+                                       :initial-contents (append top-lipids bottom-lipids)))
+                   (membrane (make-instance 'ga-membrane
+                                            :bounding-box bounding-box
+                                            :z-height z-height
+                                            :lipids lipids
+                                            :lipid-selector lipid-selector
+                                            :ga-solute ga-solute)))
+              #+(or)(optimize-lipid-placement membrane)
+              membrane
+              )))))))
 
 (defun do-score-cell (bounding-box source target collisions close-distance)
   (let ((range-start (length (indices collisions)))
@@ -1805,7 +1794,7 @@ The atom-res-mol is a list of the atom,residue and molecule."
 
 (defmethod print-object ((object membrane-strip) stream)
   (print-unreadable-object (object stream :type t)
-    (format stream ":dir-fn ~a :min-val ~a :max-val ~a" (dir-fn object) (min-val object) (max-val object))))
+    (format stream ":dir-fn ~a :min-val ~6,2f :max-val ~6,2f" (dir-fn object) (min-val object) (max-val object))))
 
 (defun classify-strip (membrane selection-function dir-fn min-val max-val)
   (let (inside
@@ -1841,8 +1830,7 @@ The atom-res-mol is a list of the atom,residue and molecule."
 (defun identify-strip (memb1 memb2)
   (let ((dir (random 2))
         (from-to (random 2))
-        (bounding-box (bounding-box memb1))
-        )
+        (bounding-box (bounding-box memb1)))
     (let ((min-corner (chem:min-corner bounding-box))
           (max-corner (chem:max-corner bounding-box))
           (bound0 (random 1.0))
@@ -1853,6 +1841,7 @@ The atom-res-mol is a list of the atom,residue and molecule."
               (values bound1 bound0))
         (unless (or (> (- bound1 bound0) 0.3)
                     (< (- bound1 bound0) 0.7))
+          (format t "Could not identify-strip~%")
           (return-from identify-strip nil))
         (let* ((dir-fn (ecase dir
                          (0 'geom:vx)
@@ -1874,8 +1863,11 @@ The atom-res-mol is a list of the atom,residue and molecule."
                          (and (>= val val0) (< val val1))))))
                  (strip1 (classify-strip memb1 selector dir-fn val0 val1))
                  (strip2 (classify-strip memb2 selector dir-fn val0 val1)))
-            (when (compatible-strips-p strip1 strip2)
-              (values strip1 strip2))))))))
+            (if (compatible-strips-p strip1 strip2)
+                (values strip1 strip2)
+                (progn
+                  (when (chem:verbose 1) (format t "Strips were not compatible~%"))
+                  nil))))))))
 
 (defun cross-two-membranes (memb1 memb2)
   (let ((cmemb1 (copy-ga-membrane memb1))
@@ -1884,12 +1876,32 @@ The atom-res-mol is a list of the atom,residue and molecule."
           do (multiple-value-bind (strip1 strip2)
                  (identify-strip cmemb1 cmemb2)
                (when strip1
+                 (when (chem:verbose 1)
+                   (format t "Identified strips~%")
+                   (format t "strip1 ~a inside: ~a outside: ~a~%" strip1 (length (inside strip1)) (length (outside strip1)))
+                   (format t "strip2 ~a inside: ~a outside: ~a~%" strip2 (length (inside strip2)) (length (outside strip2))))
                  (let ((lipids (if (= (random 2) 0)
                                    (coerce (append (inside strip1) (outside strip2)) 'vector)
                                    (coerce (append (outside strip1) (inside strip2)) 'vector))))
                    (setf (lipids cmemb1) lipids))
-                 (return-from cross-two-membranes cmemb1)))))
-  memb1)
+                 (return-from cross-two-membranes (values cmemb1 t))))))
+  (when (chem:verbose 1) (format t  "Could not cross-two-membranes~%"))
+  (values memb1 nil))
+
+(defun cross-membranes (membranes &optional (select-fraction *select-fraction*))
+  (let (new-membranes
+        (crosses 0))
+    (loop with population-size = (length membranes)
+          for index below population-size
+          for parent1-index = (random (floor (* population-size select-fraction))) 
+          for parent2-index = (random (floor (* population-size select-fraction))) 
+          for parent1 = (elt membranes parent1-index)
+          for parent2 = (elt membranes parent2-index)
+          do (multiple-value-bind (mutant crossed)
+                 (cross-two-membranes parent1 parent2)
+               (push mutant new-membranes)
+               (when crossed (incf crosses))))
+    (values new-membranes crosses)))
 
 (defun mutate-lipids (orig-membrane &optional (fraction-mutations 0.03))
   (let ((membrane (copy-ga-membrane orig-membrane))
@@ -2021,7 +2033,7 @@ The atom-res-mol is a list of the atom,residue and molecule."
   (let ((unsorted-scored-membranes
           (if parallel
               (progn
-                (cando:lazy-setup-lparallel)
+                (cando:lazy-setup-lparallel-kernel)
                 (lparallel:pmap 'list
                                 (lambda (memb)
                                   (multiple-value-bind (num-collisions collisions)
@@ -2077,16 +2089,6 @@ The atom-res-mol is a list of the atom,residue and molecule."
         for membrane-collisions in collisions
         collect (mutate-collisions-one-membrane membrane membrane-collisions fraction-collisions-randomize)))
 
-(defun cross-membranes (membranes &optional (select-fraction *select-fraction*))
-  (loop with population-size = (length membranes)
-        for index below population-size
-        for parent1-index = (random (floor (* population-size select-fraction))) 
-        for parent2-index = (random (floor (* population-size select-fraction))) 
-        for parent1 = (elt membranes parent1-index)
-        for parent2 = (elt membranes parent2-index)
-        for mutant = (cross-two-membranes parent1 parent2) 
-        collect mutant))
-
 
 (defun randomly-mutate-membranes (membranes mutate-lipid-fraction)
   (loop for membrane in membranes
@@ -2121,9 +2123,16 @@ The atom-res-mol is a list of the atom,residue and molecule."
                                    (population-size 200)
                                    (select-fraction 0.1)
                                    (number-of-generations 100)
+                                   (lipid-radius *lipid-radius*)
                                    (parallel nil))
+  (format t "Building the template membrane~%")
+  (finish-output)
   (let* ((template-membrane (build-ga-membrane solute :input-bounding-box input-bounding-box :lipid-selector lipid-selector))
          (generation 0))
+    ;; optimize the placement of lipids
+    (format t "Optimizing the crude lipid placement~%")
+    (finish-output)
+    (optimize-lipid-placement template-membrane :lipid-radius lipid-radius)
     ;; Fill the population at start
     (let* ((membranes (build-population template-membrane :population-size population-size))
            scored-membranes)
@@ -2146,8 +2155,11 @@ The atom-res-mol is a list of the atom,residue and molecule."
             do (let ((collisions (mapcar #'collisions scored-membranes)))
                  (setf membranes (mutate-collisions membranes collisions)))
                ;; generate recombined membranes by mixing parts of one top membrane with another
-            do  (let ((new-membranes (cross-membranes membranes select-fraction)))
-                  (setf membranes new-membranes))
+            do  (multiple-value-bind (new-membranes crosses)
+                    (cross-membranes membranes select-fraction)
+                  (setf membranes new-membranes)
+                  (format t "After crossing there are ~a new membranes from ~a crosses~%"
+                          (length new-membranes) crosses))
                ;; Do some random mutations of *mutate-lipid-fraction* 
             do (format t "About to randomly-mutate-membranes~%")
             do (let ((new-membranes (randomly-mutate-membranes membranes *mutate-lipid-fraction*)))
