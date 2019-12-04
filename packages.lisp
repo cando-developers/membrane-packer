@@ -26,4 +26,5 @@
    #:add-close-contacts-as-shape
    #:close-contacts
    #:find-collision-range
-   ))
+   #:add-point-pairs-as-shape
+   #:add-lipid-spheres-as-shape))

@@ -9,6 +9,9 @@ This code uses Offset coordinates odd-r
 (defparameter *y-expand* 25.0) ; 40.0)
 (defparameter *z-expand* 10.0)
 
+(defparameter *excluded-lipid-bit-field-resolution* 0.5
+  "0.5 Angstrom spacing on the grid for figuring out area that excludes lipids")
+
 (defparameter *1fs-time-units* (/ 1.0 48.89)
   "One time unit is 48.89 fs - if we want 1 fs then we want 1/48.89 of that")
 (defparameter *select-fraction* 0.1)
@@ -354,7 +357,7 @@ all layed out in a linear vector.")
              (circle-radius (* radius (sin angle))))
         (paint-circle-in-bit-field bit-field position circle-radius)))))
    
-(defun paint-protein-at-height (bounding-box solute z-height &key (resolution 0.5))
+(defun paint-protein-at-height (bounding-box solute z-height &key (resolution *excluded-lipid-bit-field-resolution*))
   (let* ((widths (chem:get-bounding-box-widths bounding-box))
          (xbits (round (/ (geom:vx widths) resolution)))
          (ybits (round (/ (geom:vy widths) resolution)))
@@ -1194,6 +1197,20 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
                           do (let ((point-pair (list source-pos solute-pos)))
                                (vector-push-extend point-pair point-pairs))))
     point-pairs))
+
+(defun add-lipid-spheres-as-shape (widget membrane &key (color #(1 0 1)) (radius *lipid-radius*) (name "lipid-spheres"))
+  (let* ((lipids (lipids membrane))
+         (shapes (make-array (length lipids))))
+    (loop for index from 0 below (length lipids)
+          for lipid = (elt lipids index)
+          for point = (geom:get-translation (transform lipid))
+          for sphere = (vector "sphere"
+                                (vector (geom:vx point) (geom:vy point) (geom:vz point))
+                                color
+                                radius)
+          do (setf (elt shapes index) sphere))
+    (let ((add-shape (find-symbol "ADD-SHAPE" :nglv)))
+      (funcall add-shape widget shapes :name name))))
 
 (defun add-point-pairs-as-shape (widget point-pairs &key (color #(1 0 1)) (radius 4.0) (name "collisions"))
   (let ((shapes (make-array (* 3 (length point-pairs)))))
