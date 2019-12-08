@@ -21,10 +21,8 @@ This code uses Offset coordinates odd-r
 (defparameter *mutate-lipid-fraction* 0.08)
 (defparameter *mutate-position-fraction* 0.3)
 (defparameter *population-size* 200)
-(defparameter *lipid-density* 0.0090) ; 0.0098)
 (defparameter *random-tip-angle-degrees* 10.0)
 (defparameter *lipid-radius* 5.2)
-(defparameter *lipid-vdw-radius-nanometers* 0.62)
 (defparameter *lipid-vdw-edep* 1.0)
 (defparameter *close-distance* 1.8) ; 1.8)
 (defparameter *max-close-distance* 3.0)
@@ -33,25 +31,11 @@ This code uses Offset coordinates odd-r
 (defparameter *membrane-force-field-name* :system-membrane)
 
 
-(defparameter *oddr-directions* #( #( #( -1 -1)
-                                     #( -1  0)
-                                     #( -1 +1)
-                                     #(  0 +1)
-                                     #( +1  0)
-                                     #(  0 -1))
-                                  #( #(  0 -1)
-                                    #( -1  0)
-                                    #(  0 +1)
-                                    #( +1 +1)
-                                    #( +1  0)
-                                    #( +1 -1)))
-  "Directions for oddr hex-grid coordinate system")
-
 (defun setup-system-membrane-force-field ()
   (let ((force-field (chem:make-force-field))
         (nonbond-force-field (chem:make-ffnonbond-db))
         (nonbond (chem:make-ffnonbond :lipid0
-                                      :radius-nanometers *lipid-vdw-radius-nanometers*
+                                      :radius-nanometers (/ *lipid-radius* 10.0)
                                       :epsilon-kj *lipid-vdw-edep*
                                       :mass 10.0
                                       )))
@@ -94,6 +78,19 @@ all layed out in a linear vector.")
 (defclass optimized-lipid-info (lipid-info)
   ((octrees :initarg :octrees :accessor octrees)))
 
+(defclass history-entry () ())
+
+(defclass mutate-entry ()
+  ((old-lipid-info :initarg :old-lipid-info :accessor old-lipid-info)
+   (old-lipid-index :initarg :old-lipid-index :accessor old-lipid-index)
+   (new-lipid-info :initarg :new-lipid-info :accessor new-lipid-info)
+   (new-lipid-index :initarg :new-lipid-index :accessor new-lipid-index))  )
+
+(defclass shift-entry ()
+  ((old-transform :initarg :old-transform :accessor old-transform)
+   (new-transform :initarg :new-transform :accessor new-transform)   ))
+
+
 (defclass ga-thing ()
   ((transform :initform (geom:make-m4-translate (geom:vec 0.0 0.0 0.0))
               :initarg :transform :accessor transform)
@@ -101,11 +98,11 @@ all layed out in a linear vector.")
 
 
 (defclass ga-lipid (ga-thing)
-  ((array-index :initarg :array-index :accessor array-index)
-   (lipid-info :initarg :lipid-info :accessor lipid-info)
+  ((lipid-info :initarg :lipid-info :accessor lipid-info)
    (lipid-index :initarg :lipid-index :accessor lipid-index)
    (lipid-id :initarg :lipid-id :accessor lipid-id)
    (top-bottom :initarg :top-bottom :accessor top-bottom)
+   (history :initform nil :initarg :history :accessor history)
    ))
 
 (defun lipid-center (lipid)
@@ -121,7 +118,6 @@ all layed out in a linear vector.")
 (defclass ga-solute (ga-thing)
   ((octree :initarg :octree :accessor octree)
    (solute :initarg :solute :accessor solute)
-   (array-index :initform nil :initarg :array-index :accessor array-index)
    (lipid-info :initform nil :initarg :lipid-info :accessor lipid-info)
    (lipid-index :initform nil :initarg :lipid-index :accessor lipid-index)
    (lipid-id :initform nil :initarg :lipid-id :accessor lipid-id)
@@ -162,12 +158,13 @@ all layed out in a linear vector.")
 
 (defmethod shallow-copy-ga-object ((original ga-lipid))
   (make-instance 'ga-lipid
-                 :array-index (array-index original)
                  :lipid-id (lipid-id original)
                  :lipid-info (lipid-info original)
                  :lipid-index (lipid-index original)
                  :transform (transform original)
-                 :adjacent-to-solute (adjacent-to-solute original)))
+                 :top-bottom (top-bottom original)
+                 :adjacent-to-solute (adjacent-to-solute original)
+                 :history (history original)))
 
 (defclass range ()
   ((source-ga-thing :initarg :source-ga-thing :accessor source-ga-thing)
@@ -402,6 +399,12 @@ all layed out in a linear vector.")
                    when (= count 0)
                      do (paint-circle-in-bit-field new-bit-field pos *lipid-radius*)))
     new-bit-field))
+
+(defun calculate-how-many-lipids-fit-intermediate (bounding-box solute z-height &key (resolution 0.5))
+  (let* ((protein-bit-field (paint-protein-at-height bounding-box solute z-height))
+         (lipid-bit-field (excluded-lipid protein-bit-field)))
+    lipid-bit-field))
+
 
 (defun calculate-how-many-lipids-fit (bounding-box solute z-height &key (resolution 0.5))
   (let* ((protein-bit-field (paint-protein-at-height bounding-box solute z-height))
@@ -736,7 +739,7 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
             do (let ((index (or index (random (length (coordinates lipid-info))))))
                  (return-from select-lipid (cons lipid-info index))))))
 
-(defun make-random-ga-lipid (array-index xypos z-offset lipid-selector lipid-id top-bottom)
+(defun make-random-ga-lipid (xypos z-offset lipid-selector lipid-id top-bottom)
   (let* ((lipid-info-index (select-lipid lipid-selector))
          (lipid-info (car lipid-info-index))
          (lipid-index (cdr lipid-info-index))
@@ -755,7 +758,6 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
                   m2))
          (transform (geom:m*m position tweak)))
     (make-instance 'ga-lipid
-                   :array-index array-index
                    :lipid-info lipid-info
                    :lipid-index lipid-index
                    :lipid-id lipid-id
@@ -874,7 +876,7 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
           do (progn
                (format t "Adding ")
                (push ga-lipid lipids))
-          do (format t "solute ~a #collisions ~a~%" (lipid-id ga-lipid) collisions)))
+          do (format t "lipid ~a #collisions ~a~%" (lipid-id ga-lipid) collisions)))
   lipids)
 
 (defparameter *top-agg* nil)
@@ -901,7 +903,7 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
             (calculate-center-and-half-width bounding-cuboid)
           (let* ((solute-octree (chem:make-generic-octree center half-width))
                  (hex-angle (* 0.0174533 60.0)) ; 60 degrees in radians
-                 (xstep (sqrt (/ 1.0 *lipid-density*)))
+                 (xstep (* 2.0 *lipid-radius*))
                  (xdir (geom:v* (geom:vec 1.0 0.0 0.0) xstep))
                  (ypdir (geom:v* (geom:vec (cos hex-angle) (sin hex-angle) 0.0) xstep))
                  (ymdir (geom:v* (geom:vec (- (cos hex-angle)) (sin hex-angle) 0.0) xstep))
@@ -933,8 +935,8 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
               (loop for yindex from 0 below ynum
                     do (loop for xindex from 0 below xnum
                              for wrapped-xypos = (wrapped-xypos xindex yindex xstart ystart xdir ypdir ymdir xnum)
-                             for top-ga-lipid = (make-random-ga-lipid (list xindex yindex 0) wrapped-xypos z-offset lipid-selector (incf lipid-id) :top)
-                             for bottom-ga-lipid = (make-random-ga-lipid (list xindex yindex 1) wrapped-xypos z-offset lipid-selector (incf lipid-id) :bottom)
+                             for top-ga-lipid = (make-random-ga-lipid wrapped-xypos z-offset lipid-selector (incf lipid-id) :top)
+                             for bottom-ga-lipid = (make-random-ga-lipid wrapped-xypos z-offset lipid-selector (incf lipid-id) :bottom)
                              do (let ((top-solute-collides-p (lipid-protein-overlaps-p bounding-box top-ga-lipid ga-solute)))
                                   (if top-solute-collides-p
                                       (progn
@@ -1925,13 +1927,19 @@ The atom-res-mol is a list of the atom,residue and molecule."
         (num-mutations (floor (* fraction-mutations (length (lipids orig-membrane))))))
     (loop for num from 0 below num-mutations
           for index = (random (length (lipids orig-membrane)))
-          for lipid-or-solute = (aref (lipids membrane) index)
-          when (typep lipid-or-solute 'ga-lipid)
+          for lipid = (aref (lipids membrane) index)
+          when (typep lipid 'ga-lipid)
             do (let* ((new-lipid-info-index (select-lipid (lipid-selector orig-membrane)))
                       (new-lipid-info (car new-lipid-info-index))
                       (new-lipid-index (cdr new-lipid-info-index)))
-                 (setf (lipid-info lipid-or-solute) new-lipid-info
-                       (lipid-index lipid-or-solute) new-lipid-index)))
+                 (push (make-instance 'mutate-entry
+                                      :old-lipid-info (lipid-info lipid)
+                                      :old-lipid-index (lipid-index lipid)
+                                      :new-lipid-info new-lipid-info
+                                      :new-lipid-index new-lipid-index)
+                       (history lipid))
+                 (setf (lipid-info lipid) new-lipid-info
+                       (lipid-index lipid) new-lipid-index)))
     membrane))
 
 (defun mutate-position (orig-membrane &key (delta-x 0.04) (delta-y 0.04) (fraction-mutations 0.1))
@@ -1939,14 +1947,18 @@ The atom-res-mol is a list of the atom,residue and molecule."
         (num-mutations (floor (* fraction-mutations (length (lipids orig-membrane))))))
     (loop for num from 0 below num-mutations
           for index = (random (length (lipids orig-membrane)))
-          for ga-thing = (aref (lipids membrane) index)
-          when (typep ga-thing 'ga-lipid)
+          for lipid = (aref (lipids membrane) index)
+          when (typep lipid 'ga-lipid)
             do (let* ((lipid-shift (geom:vec (- (random (* 2.0 delta-x)) delta-x)
                                               (- (random (* 2.0 delta-y)) delta-y)
                                               0.0))
                       (extra-transform (geom:make-m4-translate lipid-shift))
-                      (transform (geom:m*m extra-transform (transform ga-thing))))
-                 (setf (transform ga-thing) transform)))
+                      (transform (geom:m*m extra-transform (transform lipid))))
+                 (push (make-instance 'shift-entry
+                                      :old-transform (transform lipid)
+                                      :new-transform transform)
+                       (history lipid))
+                 (setf (transform lipid) transform)))
     membrane))
 
 
