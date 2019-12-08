@@ -784,7 +784,7 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
           do (setf (gethash old-atom old-atom-to-order-index) index))
     ;; If we are debugging - then rename the lipids
     (when debug
-      (let ((lipid-name (format nil "L~a" lipid-id)))
+      (let ((lipid-name (format nil "LIPID~a" lipid-id)))
         (chem:set-name lipid-mol (intern lipid-name :keyword))
         (cando:do-residues (res lipid-mol)
           (chem:set-name res (intern (format nil "~a-~a" lipid-name (chem:get-name res)) :keyword)))))
@@ -1193,7 +1193,9 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
                  do (loop for index from start below end by 2
                           for source-coord-index = (elt (indices collisions) index)
                           for atom-res-mol = (elt (indices collisions) (1+ index))
-                          for atom = (atm atom-res-mol)
+                          for atom = (if (consp atom-res-mol)
+                                         (first atom-res-mol)
+                                         (atm atom-res-mol))
                           for solute-pos = (chem:get-position atom)
                           for source-pos = (geom:vec 0.0 0.0 0.0)
                           do (let ((point-pair (list source-pos solute-pos)))
@@ -1240,7 +1242,7 @@ will select lipid foo with 20% chance, lipid bar with 30% chance and lipid baz w
     (let ((add-shape (find-symbol "ADD-SHAPE" :nglv)))
       (funcall add-shape widget shapes :name name))))
 
-(defun add-collisions-as-shape (widget collisions &key (color #(1 0 1)) (radius 2.1))
+(defun add-collisions-as-shape (widget collisions &key (color #(1 0 1)) (radius 2.0))
   (let ((point-pairs (collisions-as-point-pairs collisions)))
     (add-point-pairs-as-shape widget point-pairs :color color :radius radius)))
 
@@ -2198,41 +2200,6 @@ The atom-res-mol is a list of the atom,residue and molecule."
             do (let ((new-membranes (randomly-shift-lipids-in-membranes membranes *mutate-position-fraction*)))
                  (setf membranes new-membranes)))
       scored-membranes)))
-
-
-#+(or)
-(defun evolve2 (template-membrane &rest args &key input-bounding-box
-                                               (lipid-selector (list (cons 1.0 *popc*)))
-                                               (population-size 200)
-                                               (select-fraction 0.1)
-                                               (number-of-generations 100)
-                                               (parallel nil)
-                                               (close-distance *close-distance*))
-  (let* ((generation 0))
-    ;; Fill the population at start
-    (let* ((membranes (build-population-orientation-only template-membrane :population-size population-size))
-           scored-membranes
-           (work-list (build-ga-membrane-work-list (first membranes))))
-      (loop named evolution
-            for sorted-scored-membranes = (score-membranes work-list membranes :sort t :close-distance close-distance)
-            for best-score = (score (first sorted-scored-membranes))
-            do (setf scored-membranes sorted-scored-membranes)
-            do (progn
-                 (format t "Generation ~3a size ~a~%" generation (length scored-membranes))
-                 (format t "  ... least collisions -> ~3a~%" (loop for index from 0 below 10
-                                                                   collect (score (elt scored-membranes index))))
-                 (finish-output))
-            do (when (= (score (first scored-membranes)) 0) (return-from evolution t))
-            do (incf generation)
-            do (when (> generation number-of-generations) (return-from evolution scored-membranes))
-               ;; Copy the scored membranes into membranes
-            do (setf membranes (mapcar #'membrane scored-membranes))
-               ;; Mutate lipid pairs that have bad contacts.
-               ;; Do some random shifting of *mutate-position-fraction* 
-            do (let ((new-membranes (randomly-shift-lipids-in-membranes membranes *mutate-position-fraction*)))
-                 (setf membranes new-membranes)))
-      scored-membranes)))
-
 
 (defun pack (solute &rest args &key input-bounding-box
                                  (lipid-selector (list (cons 1.0 *popc*)))
