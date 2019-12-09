@@ -1,0 +1,51 @@
+(in-package :membrane-packer)
+
+(defun build-num-lipids (solute num-lipids &key (input-bounding-box (chem:make-bounding-box '(60.0 60.0 60.0)))
+                                             (lipid-selector (list (cons 1.0 *popc*)))
+                                             (z-height *z-height*)
+                                             (lipid-radius *lipid-radius*))
+  (let (top-lipids bottom-lipids)
+    (let* ((lipid-selector (make-optimized-lipid-selector lipid-selector))
+           (nonbond-db (chem:compute-merged-nonbond-force-field-for-aggregate solute))
+           (x-width (chem:get-x-width input-bounding-box))
+           (y-width (chem:get-y-width input-bounding-box))
+           (z-width (chem:get-z-width input-bounding-box))
+           (z-offset *z-space*)
+           (half-x-width (/ x-width 2.0))
+           (half-y-width (/ y-width 2.0))
+           (lipid-id 0))
+      (let* ((hex-angle (* 0.0174533 60.0)) ; 60 degrees in radians
+             (xstep (* 2.0 lipid-radius))
+             (xdir (geom:v* (geom:vec 1.0 0.0 0.0) xstep))
+             (ypdir (geom:v* (geom:vec (cos hex-angle) (sin hex-angle) 0.0) xstep))
+             (ymdir (geom:v* (geom:vec (- (cos hex-angle)) (sin hex-angle) 0.0) xstep))
+             (ystep (* (sin hex-angle) xstep))
+             (xnum (floor (/ x-width xstep)))
+             (ynum (let ((simple-ynum (floor (/ y-width ystep))))
+                     (if (evenp simple-ynum) simple-ynum (1+ simple-ynum)))) ; need even number of cells in y dir
+             (x-width (* xnum xstep))
+             (y-width (* ynum ystep))
+             (xstart (- (* x-width 0.5)))
+             (ystart (- (* y-width 0.5)))
+             (lipid-id 0)
+             (bounding-box (chem:make-bounding-box (list x-width y-width z-width)
+                                                   :angles-degrees (chem:get-bounding-box-angles-degrees input-bounding-box)
+                                                   :center (chem:get-bounding-box-center input-bounding-box))))
+        (let (top-solute-colliders
+              bottom-solute-colliders)
+          (loop for yindex from (/ ynum 2) to (/ ynum 2)
+                do (loop for xindex from (- (/ xnum 2) (/ num-lipids 2)) below (+ (/ xnum 2) (/ num-lipids 2))
+                         for wrapped-xypos = (wrapped-xypos xindex yindex xstart ystart xdir ypdir ymdir xnum)
+                         for top-ga-lipid = (make-random-ga-lipid wrapped-xypos z-offset lipid-selector (incf lipid-id) :top)
+                         do (push top-ga-lipid top-lipids)))
+          (format t "There are ~a top-lipids~%" (length top-lipids))
+          (let* ((lipids (make-array (+ (length top-lipids) (length bottom-lipids))
+                                     :initial-contents (append top-lipids bottom-lipids)))
+                 (membrane (make-instance 'ga-membrane
+                                          :bounding-box bounding-box
+                                          :z-height z-height
+                                          :lipids lipids
+                                          :lipid-selector lipid-selector)))
+            #+(or)(optimize-lipid-placement membrane)
+            membrane
+            ))))))
