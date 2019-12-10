@@ -14,10 +14,10 @@
 
 (defpackage #:membrane-packer
   (:use #:common-lisp)
+  (:nicknames :mpack)
   (:export
    #:pack
    #:prepare-lipids
-
    #:load-test-molecule
    #:build-ga-membrane
    #:build-aggregate-from-ga-membrane
