@@ -84,7 +84,7 @@ all layed out in a linear vector.")
     (loop for idx below (length coords) by 3
           for x = (elt coords idx)
           for y = (elt coords (+ 1 idx))
-          do (incf square-sum (* x x y y))
+          do (incf square-sum (+ (* x x) (* y y)))
              (incf count))
     (sqrt (/ square-sum count))))
 
