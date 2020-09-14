@@ -586,7 +586,6 @@ The narrower lipids are earlier."
 
 
 (defun optimize-lipid-placement (membrane &key (lipid-radius *lipid-radius*))
-  (cando:lazy-setup-lparallel-kernel)
   (lparallel:pmapc (lambda (leaf) (optimize-lipid-leaf-placement membrane leaf lipid-radius))
                    '(:top :bottom)))
 
@@ -2106,7 +2105,6 @@ The atom-res-mol is a list of the atom,residue and molecule."
   (let ((unsorted-scored-membranes
           (if parallel
               (progn
-                (cando:lazy-setup-lparallel-kernel)
                 (lparallel:pmap 'list
                                 (lambda (memb)
                                   (multiple-value-bind (num-collisions collisions)
